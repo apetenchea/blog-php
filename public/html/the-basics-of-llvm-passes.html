@@ -1,0 +1,346 @@
+<div id="the-basics-of-llvm-passes">
+<div class="page-header">
+	<h1 id="title" class="text-center">The basics of LLVM passes</h1>
+	<p id="intro" class="lead text-justify">
+	LLVM passes allow you to make custom transformations on the intermediate representation of a program, during compilation.
+	This article describes the very basics of LLVM passes. All the examples have been tested with LLVM version 5.0.1.
+	</p>
+</div>
+<div class="article-content">
+	<h2>LLVM IR</h2>
+	<p class="text-justify">
+	A compiler usually has three main components connected in series: frontend, optimizer and backend.
+	The fronted is responsible with the high level stuff, like parsing the code and building the AST, in the end creating 
+	an intermediate representation, which makes the job of the other components much easier.
+	After that, the optimizer comes with some transformations, which are performed on the intermediate representation.
+	These transformations are usually meant to improve memory usage, speed and security. Then the backend
+	converts the program into a series of native instructions, targeting a specific architecture.
+	</p>
+	<div class="text-center">
+		<figure class="figure">
+			<img src="public/img/the-basics-of-llvm-passes/retargetable-compiler.png" class="img-responsive center-block figure-img img-fluid rounded" alt="Source Code -> Frontend -> Optimizer -> Backend -> Machine Code">
+			<figcaption class="figure-caption"><a target="_blank" href="http://www.aosabook.org/en/llvm.html">http://www.aosabook.org/en/llvm.html</a></figcaption>
+		</figure>
+	</div>
+	<p class="text-justify">
+	Writing a pass involves doing some analysis or transformations at the optimizer level.
+	The optimizer is composed out of many passes, organized in a pipeline. Each pass makes a new transformation on the <abbr title="Intermediate Representation">IR</abbr>.
+	Modifying the program is not mandatory though, as a pass might just analyze the IR without changing it.
+	</p>
+	<p class="text-justify">
+	A nice thing about LLVM is the simplified, human readable IR. Let's take a look at an example:
+	</p>
+	<pre class="highlighted-code lang-cpp">
+#include &lt;stdio.h&gt;
+
+int main()
+{
+	int x;
+	scanf("%d", &amp;x);
+	printf("%d\n", x * 8);
+	return 0;
+}</pre>
+	<p class="text-justify">
+	Generate the IR:
+	</p>
+	<pre class="highlighted-code lang-bash">
+clang -emit-llvm -S example.c</pre>
+	<p class="text-justify">
+	The output should be a file named <strong>example.ll</strong>.
+	</p>
+	<pre class="highlighted-code lang-llvm">
+define i32 @main() #0 {
+	%1 = alloca i32, align 4
+	%2 = alloca i32, align 4
+	store i32 0, i32* %1, align 4
+	%3 = call i32 (i8*, ...) @__isoc99_scanf(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i32 0, i32 0), i32* %2)
+	%4 = load i32, i32* %2, align 4
+	%5 = mul nsw i32 %4, 8
+	%6 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.1, i32 0, i32 0), i32 %5)
+	ret i32 0
+}</pre>
+	<p class="text-justify">
+	It looks like a RISC instruction set. Since the integer is multipled by 8,
+	<code>%5 = mul nsw i32 %4, 8</code>, it is possible to transform the multiplication into a left shift:
+	<code>%5 = shl nsw i32 %4, 3</code>. You can edit the <strong>.ll</strong> file and then compile it with Clang.
+	</p>
+	<pre class="highlighted-code lang-bash">
+clang -o example example.ll
+./example
+4
+32</pre>
+	<h2>Optimizing multiplication</h2>
+	<p class="text-justify">
+	Integer multiplication by powers of 2 is equivalent to left shifting. Because left shifting is faster, it is commonly
+	used as an optimization. This could be the purpose of a basic optimization pass:
+	<em>replace integer multiplication by powers of 2 with left shifts</em>. These kind of arithmetic optimizations are done automatically
+	by Clang, but the scope of this pass is simplicity. Besides, it's interesting to look under the hood and see how such things can be done.
+	</p>
+	<img class="img-responsive center-block" src="public/img/the-basics-of-llvm-passes/pass-chain.png">
+	<p class="text-justify">
+	The LLVM API comes with multiple levels of abstraction. A program is divided into <a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1Module.html">modules</a>.
+	A module is divided into <a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1Function.html">functions</a>,
+	and a function is divided into <a target="_blank" href="llvm.org/doxygen/classllvm_1_1BasicBlock.html">basic blocks</a>.
+	Finally, a basic block is divided into <a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1Instruction.html">instrustions</a>.
+	</p>
+	<div class="text-center">
+		<figure class="figure">
+			<img src="public/img/the-basics-of-llvm-passes/llvm-containers.svg" class="img-responsive center-block figure-img img-fluid rounded" alt="Module -> Function -> Basic Block -> Instruction -> Value">
+			<figcaption class="figure-caption"><a target="_blank" href="https://www.cs.cornell.edu/~asampson/blog/llvm.html">LLVM Containers by Adrian Sampson</a>
+			/  <a target="_blank" href="https://creativecommons.org/licenses/by/2.0/">CC BY</a></figcaption>
+		</figure>
+	</div>
+	<p class="text-justify">
+	All passes inherit the base class <a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1Pass.html">Pass</a>.
+	Depending on how specific you want your pass to be, you can choose to derive it from a multitude of classes, such as
+	<a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1ModulePass.html">ModulePass</a>,
+	<a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1FunctionPass.html">FunctionPass</a>, or
+	<a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1BasicBlockPass.html">BasicBlockPass</a>, to name a few.
+	It is advisable to pick the most specific class possible.
+	</p>
+	<p class="text-justify">
+	For the purpose of this arithmetic optimization pass, <span class="highlight-green">BasicBlockPass</span> is a good choice for a superclass.
+	A basic block is a linear sequence of instructions with no branches. You can image a basic block as a node in the control flow graph.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+class MultiplicationPass : public BasicBlockPass {
+	public:
+		static char ID;
+		MultiplicationPass() : BasicBlockPass(ID) {}
+
+		bool runOnBasicBlock(BasicBlock &amp;BB) override {
+			return false;
+		}
+};</pre>
+	<p class="text-justify">
+	The entry point of the pass is in the <span class="highlight-green">runOnBasicBlock</span> method,
+	which takes a reference to a <span class="highlight-green">BasicBlock</span>. That's where all the optimization magic happens.
+	Its return value has to be <strong>true</strong> in case the pass did any modification to the current basic block.<br>
+	Passes can depend on other passes, so the order in which they run matters.
+	The optimizer has to know when a pass modified something, because a modification might mean new instructions,
+	which have to be analyzed by some passes that already ran.<br>
+	For example, suppose someone creates a pass which transforms repetitive additions into a single multiplication.
+	<span class="highlight-green">y = x + x + x + x</span> gets converted into <span class='highlight-green'>y = x * 4</span>.
+	If this pass runs before the pass which optimizes multiplication, everything goes fine.
+	If not, this pass might modify some basic blocks by introducing multiplications which were not there before.
+	Hence, the optimizer has to run again some of the previous optimization passes, but only on these basic blocks which were
+	modified by the current pass.
+	That boolean return value allows the optimizer to skip a lot of fruitless computation, running passes only when it has to.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+char MultiplicationPass::ID = 0;
+
+static void registerMultiplicationPass(const PassManagerBuilder &amp;,
+		legacy::PassManagerBase &amp;PM) {
+	PM.add(new MultiplicationPass());
+}
+
+static RegisterStandardPasses MultiplicationPassRegistration(
+		PassManagerBuilder::EP_EarlyAsPossible,
+		registerMultiplicationPass);</pre>
+	<p class="text-justify">
+	LLVM uses the <span class="highlight-green">ID</span> member to identify passes.<br>
+	The <span class="highlight-green">PassManager</span> is used to optimize the execution of passes.
+	For that, a pass must be registered first. <span class="highlight-green">PassManagerBuilder::EP_EarlyAsPossible</span> hints that
+	this pass should be added before any other transforations. Other options can be found
+	<a target="_blank" href="https://svn.grid.pub.ro/svn/bhyve-save-restore/trunk/contrib/llvm/include/llvm/Transforms/IPO/PassManagerBuilder.h">here</a>.
+	</p>
+	<h2>Building a pass</h2>
+	<p class="text-justify">
+	We've ended up with a complete pass skeleton. Let's stop here for a moment to discuss the building process.
+	The repository contains the complete pass as well. To clone just the skeleton:
+	</p>
+	<pre class="highlighted-code lang-bash">
+git clone https://github.com/apetenchea/cdroot-sources.git
+cd cdroot-sources
+git checkout 2c4762cecf94fbde625ea27a4139232149cafcf2</pre>
+	<p class="text-justify">
+	I am using <a target="_blank" href="https://cmake.org/">CMake</a> to generate the
+	<a target="_blank" href="http://mrbook.org/blog/tutorials/make/">Makefile</a>. Basically, after you've cloned it,
+	all you have to do is this:
+	</p>
+	<pre class="highlighted-code lang-bash">
+chmod +x build.sh
+./build.sh</pre>
+	<p class="text-justify">
+	The command for compiling the example can be found in <a target="_blank" href="https://github.com/apetenchea/cdroot-sources/blob/master/the-basics-of-llvm-passes/compile.sh">compile.sh</a>.
+	If you run this script Clang should include your pass during compilation.
+	In case some strange error occurs, there are some troubleshooting tips in the <strong>CMakeLists.txt</strong> files.
+	</p>
+	<h2>Optimizing multiplication</h2>
+	<p class="text-justify">
+	A basic block contains one or more instructions. A nice thing about this API is that it
+	lets you iterate through it as if BasicBlock was a collection:
+	</p>
+	<pre class="highlighted-code lang-cpp">
+for (auto it = BB.begin(); it != BB.end(); ++it) {
+	Instruction &amp;instruction = *it;
+}</pre>
+	<p class="text-justify">
+	Out of all instructions, we are interested only in the multiplications. Furthermore, this particular optimization
+	method cannot be applied when the operands are floating point numbers, so another thing to check for
+	is that the multiplication operates only on integers.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+if (instruction.getOpcode() != Instruction::Mul
+		|| !instruction.getType()-&gt;isIntegerTy()) {
+	continue;
+}</pre>
+	<p class="text-justify">
+	The optimization is possible only if one of the operands is a constant.
+	LLVM offers the <a target="_blank" href="http://llvm.org/docs/ProgrammersManual.html#isa">dyn_cast</a> operator,
+	which is similar to the C++ <span class="highlight-green">dynamic_cast</span>. The key feature of this
+	operator is that it returns a <span class="highlight-green">null</span> pointer when the cast is not possible.
+	So, if both operands fail to be casted to <a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1ConstantInt.html">ConstantInt</a>,
+	it means that none of them is a constant.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+int constOperandIdx = 0;
+auto *constInt = dyn_cast&lt;ConstantInt&gt;(instruction.getOperand(0));
+if (!constInt) {
+	constInt = dyn_cast&lt;ConstantInt&gt;(instruction.getOperand(1));
+	constOperandIdx = 1;
+}
+if (!constInt) {
+	continue;
+}</pre>
+	<p class="text-justify">
+	Now <span class="highlight-green">constInt</span> is a pointer to the constant operand.
+	Being a constant integer is not enough, though.
+	In order for the optimization to work, the operand must be a power of 2. LLVM nicely provides
+	an abstraction over integer types, using the <a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1APInt.html">APInt</a> class.
+	The <a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1APInt.html#a6f1d5427c61a0f0159f6e85f41944c5c">APInt::exactLogBase2</a>
+	method returns -1 if the number is not a power of 2.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+int32_t exactLog2 = constInt-&gt;getValue().exactLogBase2();
+if (exactLog2 == -1) {
+	continue;
+}</pre>
+	<p class="text-justify">
+	Next thing is to create the right shift. <a target="_blank" href="http://llvm.org/doxygen/classllvm_1_1IRBuilder.html">IRBuilder</a>
+	can be used to create new instructions. <span class="highlight-green">constOperandIdx</span> is 0 if the first operand of the multiplication
+	is a constant, or 1 in case of the second one. In this case, the index of the other operator is simply the negation of <span class="highlight-green">constOperandIdx</span>.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+IRBuilder&lt;&gt; builder(&amp;instruction);
+Value *shl = builder.CreateShl(
+		instruction.getOperand(!constOperandIdx),
+		ConstantInt::get(instruction.getType(), exactLog2));</pre>
+	<p class="text-justify">
+	The last step is to replace the old instruction. You have to specify the instruction list, the position of the instruction that you want to
+	replace, and the newly created instruction.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+ReplaceInstWithValue(BB.getInstList(), it, shl);</pre>
+	<p class="text-justify">
+	That's pretty much it! You can find the complete pass <a target="_blank" href="https://github.com/apetenchea/cdroot-sources/tree/master/the-basics-of-llvm-passes">here</a>.
+	</p>
+	<h2>Running the pass</h2>
+	<p class="text-justify">
+	<strong>compile.sh</strong> basically uses Clang to run the pass on the C code and produce an executable.
+	You could also run a pass over an <strong>.ll</strong> file and produce another <strong>.ll</strong> file,
+	then use that to produce an executable out of the optimized IR code. The programming language doesn't matter for the backend.
+	As long as LLVM gets the IR code, it can handle it independently. This is how the frontend is decoupled from the backend.<br>
+	Let's see the effect of running the pass on the original <strong>example.ll</strong> file.
+	</p>
+	<pre>
+clang -Xclang -load -Xclang build/multiplication-pass/libMultiplicationPass.so -emit-llvm -S example.ll</pre>
+	<p class="text-justify">
+	Clang takes the IR and optimizes it (<span class="highlight-green">%5...</span>):
+	</p>
+	<pre class="highlighted-code lang-llvm">
+define i32 @main() #0 {
+	%1 = alloca i32, align 4
+	%2 = alloca i32, align 4
+	store i32 0, i32* %1, align 4
+	%3 = call i32 (i8*, ...) @__isoc99_scanf(i8* getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i32 0, i32 0), i32* %2)
+	%4 = load i32, i32* %2, align 4
+	%5 = shl i32 %4, 3
+	%6 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([4 x i8], [4 x i8]* @.str.1, i32 0, i32 0), i32 %5)
+	ret i32 0
+}</pre>
+	<p class="text-justify">
+	Again, you could compile this using Clang, as if it were a regular <strong>.c</strong> file. This doesn't mean you'll always depend on Clang, though.
+	LLVM comes with a complete <a target="_blank" href="https://llvm.org/">toolchain</a>. You can even generate <a target="_blank" href="https://llvm.org/docs/BitCodeFormat.html">LLVM Bitcode</a>,
+	which can be executed using the <a target="_blank" href="https://releases.llvm.org/5.0.0/docs/CommandGuide/lli.html">lli JIT compiler</a>.
+	If you have multiple versions of LLVM installed, it is better to use full names, including the version.<br>
+	Running the example using JIT:
+	</p>
+	<pre class="highlighted-code lang-bash">
+# produce the bitcode
+llvm-as-5.0 example.ll
+# run it
+lli-5.0 example.bc
+5
+40</pre>
+	<p class="text-justify">
+	Because it allows one to optimize the intermediate representation regardless of what language was there before, it is possible to write the exact same program in Rust,
+	generate the IR, then optimize it using the above pass, generate assembly code, and in the end obtain a working executable compiled with Clang!
+	</p>
+	<pre class="highlighted-code lang-rust">
+use std::io;
+
+fn main() {
+	let mut x = String::new();
+	io::stdin().read_line(&amp;mut x).expect("Error!");
+	let x: u32 = x.trim().parse().expect("Error!");
+	println!("{}", x * 8);
+}</pre>
+	<pre class="highlighted-code lang-bash">
+rustc --emit=llvm-ir example.rs</pre>
+	<p class="text-justify">
+	The first step is to generate the IR using the rustc compiler.
+	<strong>example.ll</strong> looks totally different than the one generated by Clang, but it is still LLVM IR nontheless.
+	Now that you have the intermediate representation, you can almost forget that this program was written in Rust.<br>
+	<a target="_blank" href="http://llvm.org/docs/CommandGuide/opt.html">opt</a> is the LLVM optimizer and analyzer. It can take LLVM IR or
+	bitcode and optimize it using a standard or custom passes. In order to use a custom pass, the code has to be modified a bit. The
+	following function is added at the end of <strong>MultiplicationPass.cpp</strong>.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+static RegisterPass<MultiplicationPass> X("mul", "Turns multiplication by powers of 2 into left shifts.",
+		false /* Only looks at CFG */,
+		false /* Analysis Pass */);</pre>
+	<p class="text-justify">
+	opt will now identify the custom pass as <span class="highlight-green">mul</span>. After the optimization, <a target="_blank" href="https://llvm.org/docs/CommandGuide/llc.html">llc</a>
+	is used to convert the IR or bitcode into assembly. Then, it all turns back at Clang, because it can take the assembly and generate an executable.
+	</p>
+	<img class="img-responsive center-block" src="public/img/the-basics-of-llvm-passes/optimization.png" alt="Optimization procedure">
+	<pre class="highlighted-code lang-bash">
+# optimize
+opt-5.0 -load ./build/multiplication-pass/libMultiplicationPass.so -mul -o example_opt.ll example.ll
+
+# generate assembly code
+llc-5.0 example_opt.ll -o example.s
+
+# create the executable
+clang ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/libstd-fe0b1b991511fcaa.so example.s -o example</pre>
+	<p class="text-justify">
+	Notice that I had to link Rust's standard library. That is because the Rust example makes use of that stuff,
+	and Clang doesn't know by default where to find it.
+	</p>
+	<pre class="highlighted-code lang-bash">
+./example
+9
+72</pre>
+	<p class="text-justify">
+	It works! A great thing about this philosophy is that an optimization pass doesn't have to be compiler specific any longer. You can write it once
+	and integrate it wherever you want.
+	</p>
+</div>
+<hr>
+<div id="references" class="text-center">
+	<h2>References</h2>
+	<ul class="list-unstyled">
+		<li><a target="_blank" href="https://www.cs.cornell.edu/~asampson/blog/llvm.html">https://www.cs.cornell.edu/~asampson/blog/llvm.html</a></li>
+		<li><a target="_blank" href="http://www.aosabook.org/en/llvm.html">http://www.aosabook.org/en/llvm.html</a></li>
+		<li><a target="_blank" href="http://llvm.org/docs/WritingAnLLVMPass.html">http://llvm.org/docs/WritingAnLLVMPass.html</a></li>
+		<li><a target="_blank" href="http://bholt.org/posts/llvm-quick-tricks.html">http://bholt.org/posts/llvm-quick-tricks.html</a></li>
+	</ul>
+</div>
+<script>
+$('.highlighted-code').each(function(i, block) {
+	hljs.highlightBlock(block);
+});
+</script>
+</div>

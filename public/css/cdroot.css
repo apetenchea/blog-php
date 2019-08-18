@@ -1,0 +1,213 @@
+html {
+	position: relative;
+	min-height: 100%;
+}
+
+body {
+	font-family: "Lato";
+	margin-bottom: 60px;
+}
+
+p {
+	text-indent: 0%;
+}
+
+main {
+	padding-top: 20px;
+}
+
+footer {
+	text-align: center;
+}
+
+main img {
+	margin: 2% 0%;
+}
+
+details {
+	cursor: pointer;
+}
+
+figure img {
+	margin-bottom: 0;
+}
+
+figure {
+	margin-bottom: 2%;
+}
+
+.figure-caption {
+	font-size: 75%;
+}
+
+.clickable {
+	cursor: pointer;
+}
+
+.blog-entry-title {
+	font-weight: bold;
+	cursor: pointer;
+}
+
+.row {
+	margin-right: 0px;
+	margin-left: 0px;
+}
+
+.page-header {
+	padding-bottom: 20px;
+}
+
+.navbar, #footer-content {
+	background-color: black;
+}
+
+.navbar-brand, #site-map {
+	font-size:calc(12px + 0.8vw);
+}
+
+.toggle-categories{
+	padding-right: 5px;
+	cursor: pointer;
+	text-decoration: underline;
+}
+
+.breadcrumb > li + li:before {
+	color: #ccc;
+	content: " & ";
+	padding: 0 5px;
+}
+
+.pagination {
+	float: right;
+}
+
+.pagination > li > a {
+  background: grey;
+  color: white;
+}
+
+.table-borderless > tbody > tr > td,
+.table-borderless > tbody > tr > th,
+.table-borderless > tfoot > tr > td,
+.table-borderless > tfoot > tr > th,
+.table-borderless > thead > tr > td,
+.table-borderless > thead > tr > th {
+	border: none;
+}
+
+.category-in-list {
+	font-weight: bold;
+}
+
+.panel-title {
+	font-family: "Lato";
+	font-size: 20px;
+	padding-left: 5px;
+}
+
+
+.links-page h2 {
+	font-size: 1.5em;
+}
+
+.table-striped > tbody > tr:nth-of-type(2n+1) {
+	background-color: rgba(243, 243, 243, 1);
+}
+
+#about, #links, #blog, #footer-links {
+	font-weight: bold;
+}
+
+#footer-content {
+	position: absolute;
+	bottom: 0;
+	width: 100%;
+}
+
+#footer-links > ul > li > a {
+	color: #9d9d9d;
+	font-size: 125%;
+}
+
+#side-panel {
+	float: right;
+}
+
+#myself {
+	width: 100%;
+}
+
+#about-me {
+	font-size: 135%;
+}
+
+#categories-btn {
+	text-decoration: none;
+	color: black;
+}
+
+#references a {
+	font-size: 1.3em;
+}
+
+details:focus, summary:focus, #categories-btn:focus {
+	outline: none;
+}
+
+#category-list > .category {
+	font-size: 130%;
+}
+
+.category-security {
+	color: #a80606;
+}
+
+.category-mathematics {
+	color: #bc6105;
+}
+
+.category-algorithms {
+	color: #66895d;
+}
+
+.category-psychology {
+	color: #281887;
+}
+
+.category-windows {
+	color: #0000FF;
+}
+
+.category-software {
+	color: #0b9e19;
+}
+
+.category-networking {
+	color: #96108b;
+}
+
+.category-programming {
+	color: #e63900;
+}
+
+.highlight-green {
+	padding: 2px 4px;
+	font-size: 90%;
+	color:  #009900;
+	background-color: #f9f2f4;
+	border-radius: 4px;
+}
+
+#title {
+	margin-bottom: 5vh;
+}
+
+#blog-entries {
+	margin-top: 50px;
+}
+
+#error-message {
+	text-align: center;
+	font-size: 3em;
+}

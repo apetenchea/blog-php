@@ -1,0 +1,285 @@
+<div id="hidden-imported-procedures">
+<div class="page-header">
+	<h1 id="title" class="text-center">Hidden imported procedures</h1>
+	<p id="intro" class="lead text-justify">
+	Malware authors came up with many methods of increasing the difficulty of static analysis. A simple
+	way is to remove the Imports Table.
+	</p>
+</div>
+<div class="article-content">
+	<p class="text-justify">
+	Almost every program makes use of external libraries. On Windows, the most common one is <strong>kernel32.dll</strong>,
+	because it allows one to access the majority of the Windows API. Procedures such as <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms682425(v=vs.85).aspx">CreateProcess</a>
+	or <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/aa366887(v=vs.85).aspx">VirtualAlloc</a>
+	are just a few of those exported by this library.
+	</p>
+	<h2>Static linking</h2>
+	<p class="text-justify">
+	Whenever a procedure is statically linked, the linker actually copies data from the library, embedding
+	it into the executable. There are some advantages to this, one being portability, since the program
+	can run even on systems that don't have the required library installed. Also, since the linking process doesn't
+	take place at runtime, the program might have a slightly faster startup. An obvious disadvantage is the increase
+	in memory consumption.
+	</p>
+	<h2>Dynamic linking</h2>
+	<p class="text-justify">
+	This method is very common. The DLL is loaded into memory once, and all the programs can get data from it.
+	This saves a great deal of space, and it can be done either at load time or runtime.
+	</p>
+	<h3>Load-time dynamic linking</h3>
+	<p class="text-justify">
+	From the point of view of the programmer, this might be the most straightforward way to link a library.
+	The executables contains metadata about linked libraries and procedures. This information is used by the
+	<a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms684184(v=vs.85).aspx">dynamic linker</a>,
+	which finds each library and locates inside it all the corresponding procedures. Then, for each imported procedure, it patches the image with the correct
+	address. In case of PE files, the data used by the linker is found in a structure called the
+	<a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680547(v=vs.85).aspx#the_.idata_section">Import Table</a>.
+	Because all this information is stored inside the executable, it gives away important metadata, which can be used to automate static analysis.
+	Let's take a look at a concrete example. In order to display a standard message box, one can use the
+	<a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms645505(v=vs.85).aspx">MessageBox</a>
+	procedure, found inside <strong>user32.dll</strong>.<br>
+	</p>
+	<pre class="highlighted-code lang-cpp">
+#include &lt;Windows.h&gt;
+
+int main()
+{
+	MessageBox(NULL, "HIDDEN", NULL, MB_OK);
+	ExitProcess(0);
+	return 0;
+}</pre>
+	<p class="text-justify">
+	<a target="_blank" href="https://www.hex-rays.com/products/ida/">IDA</a> shows me the following imports:
+	</p>
+	<pre>
+00402000  ExitProcess  KERNEL32
+00402008  MessageBoxA  USER32</pre>
+	<p class="text-justify">
+	Because this information exists inside the executable, it is very easy to see that this program makes use of <code>MessageBox</code> and <code>ExitProcess</code>.
+	</p>
+	<h3>Building the minimum</h3>
+	<p class="text-justify">
+	When I build these examples, I used <em>Visual Studio Community Edition 2015</em>. <strong>Target</strong> was set to <span class="highlight-green">Release x86</span>.
+	In <strong>Project-&gt;Properties-&gt;Linker-&gt;Advanced-&gt;Entry Point</strong> set <span class="highlight-green">main</span> as the entry point.
+	Disable <span class="highlight-green">Safe SEH</span>, <span class="highlight-green">Debugging</span>, and <span class="highlight-green">DEP</span>.
+	This removes all the checks and security measures added by Visual Studio, keeping the executable as close as possible to the source code.
+	These options are very useful for improving the security of the application, but the purpose here is to prevent the compiler from inserting additional imports.
+	</p>
+	<h3>Run-time dynamic linking</h3>
+	<p class="text-justify">
+	It is also possible to link procedures at runtime. This process requires a little bit more effort and care from the programmer.
+	First of all, the library has to be loaded using <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms684175(v=vs.85).aspx">LoadLibrary</a>.
+	During this step, the DLL module is mapped into the virtual address space of the process. Afterwards, you can start importing procedures from it.
+	To do this, the library handle has to be passed to <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms683212(v=vs.85).aspx">GetProcAddress</a>,
+	along with the name of a procedure. Finally, a procedure handle is obtained, which is used pretty much like a function pointer. Because this process happens at runtime,
+	there will be no information about these procedures available in the Import Table.
+	Notice how the code already looks more complicated due to use of function pointers.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+#include &lt;Windows.h&gt;
+
+typedef int(*msg_box) (void *, char *, char *, unsigned int);
+
+int main()
+{
+	HMODULE user32_dll = LoadLibrary("user32.dll");
+	if (!user32_dll) {
+		ExitProcess(-1);
+	}
+	msg_box MsgBox = (msg_box)GetProcAddress(user32_dll, "MessageBoxA");
+	if (!MsgBox) {
+		ExitProcess(-1);
+	}
+	MsgBox(NULL, "HIDDEN", NULL, MB_OK);
+	ExitProcess(0);
+	return 0;
+}</pre>
+	<p class="text-justify">
+	This time, the full name of the procedure is required. There is no <code>MessageBox</code> procedure in fact,
+	there are <code>MessageBoxW</code> (Unicode) and <code>MessageBoxA</code> (ANSI). In case of load-time dynamic linking,
+	the compiler chooses one for you.
+	</p>
+	<pre>
+00402000  LoadLibraryA  KERNEL32
+00402004  GetProcAddress  KERNEL32
+00402008  ExitProcess  KERNEL32</pre>
+	<p class="text-justify">
+	There are still a few functions imported from <em>kernel32.dll</em>. <code>LoadLibrary</code> and <code>GetProcAddress</code>
+	must appear there in order to link other DLLs at runtime. Notice though that MessageBox is missing. Hence, the Import Table no longer shows
+	all the procedures used by the program, but there is still some information. These imports are clearly hinting that there might be more
+	happening at run-time. The problem is that in order to link a DLL at runtime, the Windows API is needed.
+	By completely removing the Import Table, the program no longer imports <em>kernel32.dll</em>. There is no
+	easy way to import stuff at run-time without using it.
+	</p>
+	<h2>No imports at all</h2>
+	<p class="text-justify">
+	The most important piece of the puzzle is the base address of <em>kernel32.dll</em>. But since there are
+	no imports whatsoever, how does one find it?<br>
+	The answer lies on the stack. Let's put it this way: a running image is part of a process, and a process has
+	at least one running thread. When starting, the entry point of a thread is called from <em>BaseThreadInitThunk</em>,
+	which is an undocumented procedure located inside <em>kernel32.dll</em>.
+	When you double-click on an executable, Windows creates a new process, thus starting a new thread.
+	This means that <em>BaseThreadInitThunk</em> is called at some point before the actual program starts.
+	Underneath that lies a <code>call</code> instruction. This, besides changing the <code>EIP</code>, pushes the
+	address of the next instruction onto the stack.
+	</p>
+	<img class="img-responsive" src="public/img/hidden-imported-procedures/x32.gif" alt="Debugger illustration">
+	<p class="text-justify">
+	When <code>main</code> is called, an address from inside <em>kernel32.dll</em> is pushed onto the stack. Notice
+	the first DWORD on the stack when <em>example3.EntryPoint</em> is reached.
+	</p>
+	<img class="img-responsive center-block" src="public/img/hidden-imported-procedures/stack.png" alt="Stack when entering main.">
+	<p class="text-justify">
+	By knowing that address, it is possible to obtain the base address of the <em>kernel32.dll</em> module. In order
+	to extract it from the stack, some assembly is needed at the very beginning of <code>main</code>.
+	</p>
+	<pre class="highlighted-code lang-x86asm">
+mov eax, [esp + 0x4];
+mov addr_inside_kernel32, eax;</pre>
+	<p class="text-justify">
+	Here are the first few instructions of <code>main</code> as seen in the debugger:
+	</p>
+	<pre class="highlighted-code lang-x86asm">
+PUSH EBP
+MOV EBP, ESP
+MOV EAX, DWORD PTR SS:[ESP + 4]
+MOV DWORD PTR DS:[163334], EAX</pre>
+	<p class="text-justify">
+	The compiler automatically adds the <em>function prologue</em>. The first instruction is <code>push ebp</code>,
+	which puts a DWORD on top of the stack. This means that the return address we're looking for is actually
+	the second one in the stack and therefore we add 4 to <em>esp</em> in order to get it.
+	</p>
+	<p class="text-justify">
+	Once you know an address inside the library, you need to find the base address.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+#define MZ 0x5a4d
+#define JUMP_LEN 0x10000
+#define TRIM_4 0xffff0000
+
+/* Given an address inside a module, find the module base address. */
+unsigned int GetModuleBase(unsigned int addr)
+{
+	unsigned int base = addr &amp; TRIM_4;
+	while (*(short *)base != MZ) {
+		base -= JUMP_LEN;
+	}
+	return base;
+}</pre>
+	<p class="text-justify">
+	This code is not based on documented facts. It is rather based on
+	experiments. Nevetheless, it seems to work even on Windows 10, at least until Microsoft decides
+	to change something.<br>
+	It begins by trimming the last four zeros from the given address (in hex). This is because
+	the base address of <em>kernel32.dll</em> always seems to end with 4 zeros, meaning that it's a multiple of
+	0x10000. As a matter of fact, when I was making that GIF with the debugger, the library's address happened to be 0x74b90000.
+	Therefore, only multiples of 0x10000 are checked. The right address is identified by checking if it references
+	the WORD <span class="highlight-green">'MZ'</span>. This is how any <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680547(v=vs.85).aspx">Portable Executable</a>
+	starts. On the way to the base address, there might be some pages from which reading is not possible. To avoid
+	a possible crash, one could use an exception handler.<br>
+	In the example above, the value of the <code>addr</code> argument was 0x74ba8744. Trimming it results in
+	0x74ba0000. Since the <em>kernel32.dll</em> started at 0x74b90000, only two addresses were checked:
+	0x74ba0000 and 0x74b90000.
+	</p>
+	<p class="text-justify">
+	That was half the battle. The next step is to find the <em>GetProcAddress</em> procedure. Its address can be found in the
+	<a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680547(v=vs.85).aspx#the_.edata_section__image_only_">Export Table</a>
+	of the library.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+struct IMAGE_EXPORT_DIRECTORY {
+	DWORD Characteristics;
+	DWORD TimeDateStamp;
+	WORD MajorVersion;
+	WORD MinorVersion;
+	DWORD Name;
+	DWORD Base;
+	DWORD NumberOfFunctions;
+	DWORD NumberOfNames;
+	DWORD AddressOfFunctions;
+	DWORD AddressOfNames;
+	DWORD AddressOfNameOrdinals;
+}</pre>
+	<p class="text-justify">
+	<code>AddressOfFunctions</code> is the <abbr title="Relative Virtual Address">RVA</abbr> of an array
+	containing the RVAs of exported funtions.
+	<code>AddressOfNames</code> is the RVA of an array with pointers to strings,
+	which denote function names (these 'pointers' are in fact other RVAs).
+	<code>AddressOfNameOrdinals</code> is used to correlate the two fields above.
+	For example, if the string <em>"GetProcAddress"</em> is located at
+	<em>AddressOfNames[5]</em>, then the address of the function is found using <strong>AddressOfFunctions[AddressOfNameOrdinals[5]]</strong>.
+	For more details about the Export Table you can look <a target="_blank" href="http://resources.infosecinstitute.com/the-export-directory/">here</a>.
+	</p>
+	<pre class="pre-scrollable highlighted-code lang-cpp">
+/* Given the address of kernel32 module, find the address of GetProcAddress. */
+GetProcAddress_t FindGetProcAddress(unsigned int kernel32_base)
+{
+	/* PE Header */
+	unsigned int pe_header = kernel32_base + *(unsigned int *)(kernel32_base + E_LFANEW);
+	if (*(unsigned int *)pe_header != PE_SIGNATURE) {
+		return 0;
+	}
+	/* Export Directory */
+	unsigned int export_directory = kernel32_base + *(unsigned int *)(pe_header + 0x78);
+	unsigned int number_of_names = *(unsigned int*)(export_directory + 0x18);
+	unsigned int *address_of_names = (unsigned int *)(kernel32_base + *(unsigned int*)(export_directory + 0x20));
+
+	/* Search within exported functions. */
+	unsigned int index = 0;
+	for (unsigned int index = 0; index &lt; number_of_names; ++index) {
+		if (strcmp((char *)(kernel32_base + address_of_names[index]), "GetProcAddress") == 0) {
+
+			/* Found GetProcAddress. */
+			unsigned short *address_of_ordinals = (unsigned short *)(kernel32_base +
+				*(unsigned int*)(export_directory + 0x24));
+			unsigned short ordinal = address_of_ordinals[index];
+			unsigned int *address_of_functions = (unsigned int *)(kernel32_base + *(unsigned int*)(export_directory + 0x1c));
+			return (GetProcAddress_t)(kernel32_base + address_of_functions[ordinal]);
+		}
+	}
+	return 0;
+}</pre>
+	<p class="text-justify">
+	What remains now is to put together all the pieces of the puzzle.
+	The complete code can be found <a target="_blank" href="https://github.com/apetenchea/cdroot-sources/blob/master/hidden-imported-procedures/example3.cpp">here</a>.
+	</p>
+	<h2>Conclusion</h2>
+	<p class="text-justify">
+	The examples shown here were small and focused on eliminating the <em>Import Table</em>.	
+	In real life, a clean application would have no reason to do that, unless it is a crackme or something made
+	for didactic purposes.
+	Malware authors usually don't use this technique alone, as it is not sufficient.
+	Even though the imports are hidden, strings are still visible.<p>
+	<pre>
+strings.exe example3.exe &gt; strings.txt</pre>
+	<p class="text-justify">
+	Here are some of the strings</em>:
+	</p>
+	<pre>
+GetProcAddress
+ExitProcess
+LoadLibraryA
+user32.dll
+MessageBoxA
+HIDDEN</pre>
+	<p class="text-justify">
+	They might use a packer or crypter to hide these, or simply xor all strings with some key.
+	Either way, <a target="_blank" href="https://docs.microsoft.com/en-us/sysinternals/downloads/procmon">Procmon</a>
+	or other dynamic analysis tools will unveil these hidden calls to <em>LoadLibrary</em>,
+	but in order analyse it dynamically, the executable has to be ran in a safe environment. When automated, static analysis is
+	faster, but also more limited.
+	</p>
+</div>
+<hr>
+<div id="references" class="text-center">
+	<h2>References</h2>
+	<ul class="list-unstyled">
+		<li><a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680547(v=vs.85).aspx">msdn.microsoft.com</a></li>
+	</ul>
+</div>
+<script>
+$('.highlighted-code').each(function(i, block) {
+	hljs.highlightBlock(block);
+});
+</script>
+</div>

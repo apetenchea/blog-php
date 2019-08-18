@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>cdroot</title>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="description" content="Mostly stuff I find interesting.">
+		<meta name="keywords" content="blog,Alexandru Petenchea,computers,software,security,programming">
+		<link rel="stylesheet" href="public/css/bootstrap.min.css">
+		<link rel="stylesheet" href="public/css/github.css">
+		<link rel="stylesheet" href="public/css/cdroot.css">
+		<link rel="stylesheet" href="//fonts.googleapis.com/css?family=Lato">
+		<link rel="shortcut icon" href="public/img/icon.png" type="image/png">
+	</head>
+	<body>
+		<nav class="navbar navbar-inverse navbar-fixed-top">
+			<div class="container-fluid">
+				<div class="navbar-header">
+					<button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#site-map">
+						<span class="icon-bar"></span>
+						<span class="icon-bar"></span>
+						<span class="icon-bar"></span>
+					</button>
+					<a id="blog" class="navbar-brand clickable" role="button"><span class="glyphicon glyphicon-console"></span> cd /root</a>
+				</div>
+				<div id="site-map" class="collapse navbar-collapse">
+					<ul class="nav navbar-nav navbar-right">
+						<li>
+							<a id="about" class="clickable" role="button">/about</a>
+						</li>
+						<li>
+							<a id="links" class="clickable" role="button">/links</a>
+						</li>
+					</ul>
+				</div>
+			</div>
+		</nav>
+		<div id="content" class="container">
+			<main>
+			</main>
+		</div>
+		<footer class="footer">
+			<div id="footer-content" class="container">
+				<div id="footer-links">
+					<ul class="list-inline">
+						<li><a class="clickable" href="https://www.linkedin.com/in/alexandru-petenchea-155301143" target="_blank">LinkedIn</a></li>
+						<li><a class="clickable" href="https://github.com/apetenchea" target="_blank">GitHub</a></li>
+					</ul>
+				</div>
+			</div>
+		</footer>
+		<script async src="public/js/MathJax/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+		<script async src="public/js/highlight.pack.js"></script>
+		<script src="public/js/jquery-3.2.1.min.js"></script>
+		<script src="public/js/bootstrap.min.js"></script>
+		<script src="public/js/core.js"></script>
+		<script>
+console.log = function() {};
+$("main").css("margin-top",$("nav").css("height"));
+var core = new Core();
+core.start();
+		</script>
+	</body>
+</html>

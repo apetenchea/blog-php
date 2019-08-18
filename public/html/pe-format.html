@@ -1,0 +1,262 @@
+<div id="pe-format">
+<div class="page-header">
+	<h1 id="title" class="text-center">An overview of the PE format</h1>
+	<p id="intro" class="lead text-justify">
+	Portable Executable is a format used to represent executables and DLLs on Windows.
+	It evolved out of the <a target="_blank" href="https://support.microsoft.com/en-us/help/121460/common-object-file-format-coff">COFF</a> format, and
+	it presents a similar structure to the <a target="_blank" href="http://wiki.osdev.org/ELF">ELF</a> fromat.
+	</p>
+</div>
+<div class="article-content">
+	<img class="image-responsive center-block" src="public/img/pe-format/pe-structure.png">
+	<p class="text-justify">
+	A PE file is mostly composed out of headers and sections. Headers describe the structure of the file.
+	In order to load and run an EXE or DLL, the operating system must first look into its headers. Needles to say,
+	all headers are placed at the begining of the file. Sections contain mostly information about what the program does, and how it does it.<br>
+	<a target="_blank" href="https://upload.wikimedia.org/wikipedia/commons/1/1b/Portable_Executable_32_bit_Structure_in_SVG_fixed.svg">Here</a> is a really nice image describing the PE structure in detail.
+	</p>
+	<p class="text-justify">The best way to understand it is to write a program which can parse a PE file.
+	To keep things simple, let's stick to 32 bits, althogh the 64 bit version is very similar.
+	The <em>readpe</em> program is going to take the name of an EXE as a parameter and
+	dump all sections, each in a separate file. In order not to clutter this page with code,
+	I'll be posting here just the key parts of it. The complete source code can be found <a target="_blank" href="https://github.com/apetenchea/cdroot-sources/blob/master/pe-format">here</a>.<br>
+	So, let's start by reading the file and mapping it into the address space.
+	</p>
+	<pre class="pre-scrollable highlighted-code lang-cpp">
+/* Open a handle to the PE file. */
+HANDLE file_handle = CreateFileA(
+	(LPCSTR) argv[1],
+	GENERIC_READ,
+	FILE_SHARE_READ,
+	NULL,
+	OPEN_EXISTING,
+	FILE_ATTRIBUTE_NORMAL,
+	NULL
+);
+
+/* Create a memory mapping object for the file. */
+HANDLE file_mapping = CreateFileMapping(
+	file_handle,
+	NULL,
+	PAGE_READONLY,
+	0,
+	0,
+	NULL
+);
+
+/* Map the file into the address space. */
+HANDLE file_start = MapViewOfFile(
+	file_mapping,
+	FILE_MAP_READ,
+	0,
+	0,
+	0
+);</pre>
+	<p class="text-justify">
+	<span class="highlight-green">file_start</span> is now a pointer to the first byte of the file in memory.
+	From here I can go step by step and dump parts of the file.
+	</p>
+	<h2>DOS Header</h2>
+	<p class="text-justify">
+	The very first thing one can see in this structure is the <strong>DOS Header</strong> (highlighted in blue).
+	Following this header there is a little DOS program called the DOS stub, which nowadays may seem quite pointless,
+	but in the past it used to give an informative error message when someone tried to run the program in DOS mode.
+	The contents of this header (including the DOS stub) should look something like this:
+	</p>
+	<img class="img-responsive" src="public/img/pe-format/dos-header.png" alt="DOS Header example">
+	<p class="text-justify">
+	The full structure of the DOS Header can be found <a target="_blank" href="http://www.nirsoft.net/kernel_struct/vista/IMAGE_DOS_HEADER.html">here</a>.
+	There are two particular fields I would like to highlight bellow:
+	</p>
+	<dl class="dl-horizontal">
+		<dt>e_magic</dt>
+		<dd>
+		The magic number of the DOS Header, this is really the very first thing one see in the file.
+		It should always be <span class="mark">"MZ"</span>.
+		</dd>
+		<dt>e_lfanew</dt>
+		<dd>
+		An offset relative to the beginning of the file, pointing to the beginning of the PE Header.
+		</dd>
+	</dl>
+
+	<pre class="highlighted-code lang-cpp">
+/* Dump the DOS Header. */
+PIMAGE_DOS_HEADER dos_header = (PIMAGE_DOS_HEADER)file_start;
+dump("dos_header.txt", dos_header, sizeof(IMAGE_DOS_HEADER));</pre>
+	<p class="text-justify">
+	The dump function basically dumps <span class="highlight-green">sizeof(IMAGE_DOS_HEADER)</span> bytes, starting from the address <span class="highlight-green">dos_header</span>, into the file <span class="highlight-green">dos_header.txt</span>.
+	</p>
+	<p class="text-justify">
+	To obtain a pointer to the <strong>PE Header</strong>, jump <span class="highlight-green">e_lfanew</span> bytes from the beginning of the file.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+PIMAGE_NT_HEADERS32 pe_header = (PIMAGE_NT_HEADERS32) ((uint8_t *) file_start + dos_header-&gt;e_lfanew);</pre>
+	<h2>PE Header</h2>
+	<p class="text-justify">
+	This header is larger in size. Fortunately, someone already defined the <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680336(v=vs.85).aspx">IMAGE_NT_HEADERS</a> structure.<br>
+	The first thing is a 4 byte signature, <span class="mark">"PE\0\0"</span>. The PE header can be divided in two sub headers:
+	the <strong>File Header</strong> and the <strong>Optional Header</strong>.<br>
+	Following the PE signature, there are the following structures: <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680313(v=vs.85).aspx">IMAGE_FILE_HEADER</a>,
+	<a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680339(v=vs.85).aspx">IMAGE_OPTIONAL_HEADER</a> and finally an array of
+	<a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680341(v=vs.85).aspx">IMAGE_SECTION_HEADER</a> structures.
+	</p>
+	<h3>File Header</h3>
+	<p class="text-justify">
+	The <strong>File Header</strong>, also called the <strong>COFF Header</strong> (highlighted in orange), appears to be much shorter than the <strong>Optional Header</strong>
+	</p>
+	<img class="img-responsive" src="public/img/pe-format/file-header.png" alt="File Header example">
+	<p>
+	Out of all fields contained in it, I find two of them particularly interesting:
+	</p>
+	<dl class="dl-horizontal">
+		<dt>Machine</dt>
+		<dd>
+		Indicates on what CPU the program should run. In the case above, that would be an i386.
+		</dd>
+		<dt>NumberOfSections</dt>
+		<dd>
+		The number of sections contained in the file. Sections are placed right after the headers.
+		</dd>
+	</dl>
+	<pre class="highlighted-code lang-cpp">
+/* Dump the File Header. */
+dump("file_header.txt", &amp;(pe_header-&gt;FileHeader), sizeof(pe_header-&gt;FileHeader));</pre>
+	<h3>Optional Header</h3>
+	<p class="text-justify">Despite its name, the <strong>Optional Header</strong> is not optional.</p>
+	<img class="img-responsive" src="public/img/pe-format/optional-header.png" alt="Optional Header example">
+	<p>
+	It starts with a signature, followed by the major &amp; minor linker version. Most of the fields in here are pretty self explanatory. I would like to highlight a few of them:
+	</p>
+	<dl class="dl-horizontal">
+		<dt>ImageBase</dt>
+		<dd>
+		This is the address at which the linker assumes that the file is going to be mapped in memory. Usually,
+		this field needs to be patched at runtime. On Win32, the default base address for executables is <span class="mark">0x400000</span>.
+		</dd>
+		<dt>SectionAlignment</dt>
+		<dd>
+		When the file is mapped into memory, each section starts at an address that is a multiple of this value.
+		</dd>
+		<dt>SizeOfHeaders</dt>
+		<dd>
+		The total size of all headers + the size of the Sections Table. Basically, a relative offset to the starting address of the first section.
+		</dd>
+		<dt>DataDirectory</dt>
+		<dd>
+		This is an array of <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680305(v=vs.85).aspx">IMAGE_DATA_DIRECTORY</a> structures.
+		The number of entries in this array is stored into the NumberOfRvaAndSizes at the bottom of the Optional Header, right before the DataDirectory.<br>
+		It can be used to localize various parts of the executable, such as the Export and Import Tables.
+		</dd>
+	</dl>
+	<pre class="highlighted-code lang-cpp">
+/* Dump the optional header. */
+dump("optional_header.txt", &amp;(pe_header-&gt;OptionalHeader), sizeof(pe_header-&gt;OptionalHeader));</pre>
+	<h3>Sections Table</h3>
+	<p class="text-justify">
+	This table consists of section headers, each holding information about a section of the image.<br>
+	<p>
+	<img class="img-responsive" src="public/img/pe-format/sections-table.png" alt="Sections Table example">
+	<p class="text-justify">
+	The number of entries in the <strong>Sections Table</strong> is given by the <span class="highlight-green">NumberOfSections</span> field from the <strong>File Header</strong>.<br>
+	Each entry is an <a target="_blank" href="https://msdn.microsoft.com/en-us/library/windows/desktop/ms680341(v=vs.85).aspx">IMAGE_SECTION_HEADER</a> structure.
+	This structure contains the information needed to dump the contents of each section.
+	</p>
+	<dl class="dl-horizontal">
+		<dt>Name</dt>
+		<dd>
+		An 8 byte, 0 padded array, containing the section name (for example <em>.text</em>, <em>.rdata</em>, <em>.bss</em>, <em>.data</em>).
+		In case the name has exactly 8 bytes length, it is not null terminated.
+		</dd>
+		<dt>VirtualAddress</dt>
+		<dd>
+		When the loader maps the section to memory, it should map it to this address relative to the ImageBase.
+		This is used during program execution.
+		</dd>
+		<dt>SizeOfRawData</dt>
+		<dd>
+		The size of the section in the PE file. It must be a multiple of FileAlignment.
+		</dd>
+		<dt>PointerToRawData</dt>
+		<dd>
+		The offset of the section in the PE file, relative to the beginning of the file. It must be aligned on a multiple of FileAlignment.
+		</dd>
+	</dl>
+	<p class="text-justify">
+	That's all the information one needs to dump all the sections of a PE.
+	</p>
+	<pre class="highlighted-code lang-cpp">
+/* Dump all sections. */
+PIMAGE_SECTION_HEADER section_header = (PIMAGE_SECTION_HEADER)((uint8_t *) pe_header + sizeof(IMAGE_NT_HEADERS32));
+for (int index = 0; index &lt; pe_header-&gt;FileHeader.NumberOfSections; ++index) {
+	char name[IMAGE_SIZEOF_SHORT_NAME + 1] = { 0 };
+	strncpy(name, (char *)section_header[index].Name, IMAGE_SIZEOF_SHORT_NAME);
+	dump(
+		name,
+		(uint8_t *)file_start + section_header[index].PointerToRawData,
+		section_header[index].SizeOfRawData
+	);
+}</pre>
+	<p class="text-justify">
+	This is the end of the <em>readpe</em> program. Let's run it over itself and see the output:
+	</p>
+	<img class="img-responsive" src="public/img/pe-format/readpe-output.png" alt="readpe output">
+	<p class="text-justify">
+	All files prefixed with a dot are dumped sections. They're binary files, containing either code or data.<br>
+	</p>
+	<p class="text-justify">
+	Let's briefly describe of a few common sections:
+	</p>
+	<dl class="dl-horizontal">
+		<dt>.text</dt>
+		<dd>
+		Contains code that gets executed. Usually the <span class="highlight-green">AddressOfEntryPoint</span> field from the <strong>Optional Header</strong> points here.
+		</dd>
+		<dt>.data</dt>
+		<dd>
+		This section contains data that gets initialized at compile time, such as global variables.
+		</dd>
+		<dt>.rdata</dt>
+		<dd>
+		Similar to the .data section, but contains read only data.
+		</dd>
+		<dt>.bss</dt>
+		<dd>
+		Uninitialized global and static variables.
+		</dd>
+		<dt>.idata</dt>
+		<dd>
+		Contains information about DLL imports.
+		</dd>
+		<dt>.reloc</dt>
+		<dd>
+		Usually, the address at which an executable is loaded is unknown at compile time. In order fix the issue of position dependent code,
+		this section contains a table of pointers to absolute addresses, called the Relocation Table.
+		If the program is loaded at an address other than the expected one, all absolute addresses in this table are patched.
+		</dd>
+	</dl>
+	<p class="text-justify">
+	Every section can have some flags set, defined in its header. These flags give information about the section's purpose and content.
+	They indicate whether or not the section contains executable code, if it can be discarded and so on.
+	Flags also indicate permissions: executable, readable or writable.
+	</p>
+	<br>
+	<p class="text-justify">
+	And that's about it, the PE format in a nutshell! From here on, the rabbit hole goes pretty deep.
+	</p>
+</div>
+<hr>
+<div id="references" class="text-center">
+	<h2>References</h2>
+	<ul class="list-unstyled">
+		<li><a target="_blank" href="https://msdn.microsoft.com/en-us/library/ms809762.aspx">msdn.microsoft.com</a></li>
+		<li><a target="_blank" href="https://vxheaven.org/29a/29a-7/Articles/29A-7.023">vxheaven.org</a></li>
+		<li><a target="_blank" href="http://www.nirsoft.net/kernel_struct/vista/index.html">www.nirsoft.net</a></li>
+	</ul>
+</div>
+<script>
+$('.highlighted-code').each(function(i, block) {
+	hljs.highlightBlock(block);
+});
+</script>
+</div>

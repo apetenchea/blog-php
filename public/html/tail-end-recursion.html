@@ -1,0 +1,434 @@
+<div id="tail-end-recursion">
+<div class="page-header">
+	<h1 id="title" class="text-center">Tail-end recursion</h1>
+	<p id="intro" class="lead text-justify">
+	Sometimes recursion can lead to performance issues and crashes.
+	Tail-end recursion (or tail recursion) can be optimized by the compiler such that the generated machine code
+	looks similar to iteration.
+	</p>
+</div>
+<div class="article-contents">
+	<h2>Why regular recursion is not always enough?</h2>
+	<p class="text-justify">
+	Sometimes recursion is a more natural and elegant way to approach a problem,
+	especially in the case of functional languages, such as OCaml.
+	The ability of a function to call itself is a powerful concept, but it can also lead to performance issues.
+	One can overcome these by the use of tail-end recursion. All the source code used in this article can be found <a target="_blank" href="https://github.com/apetenchea/cdroot-sources/tree/master/tail-end-recursion">here</a>.<br>
+	Let's consider a function which computes the sum of all integers between 1 and a given number n:
+	</p>
+	<pre class="highlighted-code lang-ocaml">
+(*
+ * simple_rec.ml
+ * Sums up all integers from 1 to n.
+ *)
+
+let rec sum n =
+	if n = 1 then 1
+	else n + sum (n - 1);;
+
+let n = read_int() in
+print_int (sum n);
+print_newline();;</pre>
+	<p class="text-justify">
+	The code is pretty nice and compact, but unfortunately if you take the function <em>sum</em> and put it into the OCaml interpreter,
+	it crashes for large values of <em>n</em>.
+	</p>
+	<pre>
+# sum (int_of_float (10.0 ** 4.0));;
+- : int = 50005000
+# sum (int_of_float (10.0 ** 5.0));;
+- : int = 5000050000
+# sum (int_of_float (10.0 ** 6.0));;
+Stack overflow during evaluation (looping recursion?).</pre>
+	<p class="text-justify">
+	OCaml prints the <q>Stack overflow</q> message and also suggests that the cause may be the way you approached recursion.
+	The reason why this occurs is because every call to <em>sum</em> has its own stack frame, so each subsequent call to the
+	function eats up some more space on the stack, up until the stack remains out of space, resulting in a stack overflow.
+	I'll use the <span class="highlight-green">#trace</span> command to see what happens during the execution. This shows,
+	in order, all the calls and returns of the function being traced. For n = 4, it yields:
+	</p>
+	<pre>
+# #trace sum;;
+sum is now traced.
+# sum 4;;
+sum &lt;-- 4
+sum &lt;-- 3
+sum &lt;-- 2
+sum &lt;-- 1
+sum --&gt; 1
+sum --&gt; 3
+sum --&gt; 6
+sum --&gt; 10
+- : int = 10</pre>
+	<p class="text-justify">
+	<em>sum 4</em> is called first, from which <em>sum 3</em> is called which in turn calls <em>sum 2</em>, and in the end <em>sum 2</em> calls <em>sum 1</em>.
+	<em>sum 1</em> returns <em>1</em>, then <em>sum 2</em> returns <em>2 + (sum 1)</em> which is <em>3</em>, then <em>sum 3</em> returns <em>3 + (sum 2)</em>
+	which is <em>6</em> and finally <em>sum 4</em> returns <em>4 + (sum 3)</em> which gives <em>10</em>.
+	The depth of the recursion is given by the number of consecutive calls to sum, in this case the depth being 4.<br>
+	Let's compile the program and take a look inside the executable.
+	</p>
+	<pre class="highlighted-code lang-bash">
+ocamlopt -o simple_rec simple_rec.ml
+objdump -d -M intel simple_rec &gt; simple_rec.dump</pre>
+	<p class="text-justify">
+	Now you can really see what's behind that function. For more details about assembly instructions, you can consult one of <a target="_blank" href="https://software.intel.com/en-us/articles/intel-sdm">Intel's manuals</a>.
+	</p>
+	<pre class="highlighted-code lang-x86asm">
+; Due to OCaml conventions, the first parameter (integer n) is stored into register rax,
+; but rax is also the register used by a function to return a value.
+; This may lead to some confusion.
+
+00000000004022a0:
+ 4022a0: 48 83 ec 08           sub    rsp,0x8                ; allocate space for a qword on the stack
+ 4022a4: 48 83 f8 03           cmp    rax,0x3                ; compare n to 0x3
+ 4022a8: 75 0e                 jne    4022b8                 ; if n is not equal to 0x3 then jump to 4022b8
+ 4022aa: 48 c7 c0 03 00 00 00  mov    rax,0x3                ; the return value is 0x3
+ 4022b1: 48 83 c4 08           add    rsp,0x8                ; free a qword from the stack
+ 4022b5: c3                    ret                           ; pop the return address out of the stack and jump to it
+ 4022b6: 66 90                 xchg   ax,ax                  ; does nothing, just like a nop
+ 4022b8: 48 89 04 24           mov    QWORD PTR [rsp],rax    ; push n onto the stack
+ 4022bc: 48 83 c0 fe           add    rax,0xfffffffffffffffe ; strage way to subtract 2 from n?
+ 4022c0: e8 db ff ff ff        call   4022a0                 ; call sum (n - 1)
+																														 ; the call instruction pushes the address of the next instruction on the stack and then jumps to 4022a0
+ 4022c5: 48 89 c3              mov    rbx,rax                ; store in rbx the result of sum (n - 1)
+ 4022c8: 48 8b 04 24           mov    rax,QWORD PTR [rsp]    ; store in rax the value saved onto the stack (current value of n)
+ 4022cc: 48 01 d8              add    rax,rbx                ; add the result of sum (n - 1) to n
+ 4022cf: 48 ff c8              dec    rax                    ; subtract 1 from rax
+ 4022d2: 48 83 c4 08           add    rsp,0x8                ; free a qword from the stack
+ 4022d6: c3                    ret                           ; pop an address from the stack and jump to it
+ 4022d7: 66 0f 1f 84 00 00 00  nop    WORD PTR [rax+rax*1+0x0]
+ 4022de: 00 00</pre>
+	<br>
+	<p class="text-justify">
+	As a side note, there's something strange going on with the way OCaml represents integers in memory.
+	Notice that the base case appears to be the one where n is equal to 3, instead of 1, as in the OCaml source code.
+	Also, it seems to subtract 2 from an integer by overflowing the value, and at <em>4022cf</em> the sum is decremented,
+	leading to <code>n + sum (n - 1) - 1</code>.<br>This doesn't actually resemble the function, but why?<br>
+	The reason for this is that, in OCaml, the least significant bit of an integer is used as the tag bit, in order to make the distinction between pointers and integers at runtime.
+	This means we can obtain the real value of an integer if we strip the tag bit. We can do this by doing a logical right shift, or more naturally, integer division by 2.<br>
+	So, OCaml will internally represent the integer 1 as 3. That's why it does all these strange additions and subtractions. More details can be found
+	<a target="_blank" href="https://realworldocaml.org/v1/en/html/memory-representation-of-values.html">here</a>.
+	<pre>
+3 in base 2 is 00000011, if you shift right by 1 bit you get 00000001, which is 1</pre>
+	</p>
+	<br>
+	<p class="text-justify">
+	Now that I got this out of the way, why is this function susceptible to a stack overflow?
+	Every <span class="highlight-green">call</span> instruction pushes a qword (8 bytes) onto the stack. Also, before every call, the value <em>n</em>
+	has to be stored on the stack, that's another qword.
+	Every time <em>sum</em> is called, it eats up 16 bytes from the stack. To compute the total stack space needed by sum, you multiply the
+	depth of the recursion with 16 and you get the number of bytes. For n = 1000000 this is approximately 16 megabytes, thus resulting in a stack overflow.
+	</p>
+	<p class="text-justify">
+	Take a look at the following line of code:
+	<code>
+		n + sum (n - 1)
+	</code><br>
+	The problem here is that the expression depends on the value returned by <em>sum (n - 1)</em>, so it has to store the value of <em>n</em> on the
+	stack until the call to <em>sum (n - 1)</em> finishes.
+	The problem repeats again inside <em>sum (n - 1)</em>, because it has to store the value of <em>n - 1</em> on the stack until <em>sum (n - 2)</em>
+	returns, and so on. This long chain of dependencies is the root cause of the stack overflow.
+	</p>
+	<hr>
+	<h2>What is tail-end recursion?</h2>
+	<p class="text-justify">
+	The point of tail-end recursion is to write a function in such a way that the value returned by a recursive call is also the value returned by the
+	function itself. In other words, there is no pending operation on the recursive call (such as the addition of <em>n</em> in <em>sum</em>). That way, if the
+	compiler is smart enough, it won't keep the state of every function call in the stack, but rather just the current one, like in a loop.
+	A good compiler would say <q>Ok, I won't use anything from this functions's stack frame again, so there's no point in keeping it around.
+		I could just go ahead and return the result of the recursive call as the final result</q>.<br>
+	Usually, tail-end recursion requires an extra argument, whose role is to accumulate the result along the way. To avoid complicating the function's
+	signature, you can write a tail-end recursive function as a helper function and then use the, so to speak, <em>official function</em> to call
+	the helper function with the accumulator set to its initial value.
+	</p>
+	<pre class="highlighted-code lang-ocaml">
+(*
+ * tail_end.ml
+ * Sums up all integers from 1 to  n using tail recursion.
+ *)
+
+let rec sum_helper acc n =
+	if n = 1 then acc + 1
+	else sum_helper (acc + n) (n - 1);;
+
+let sum = sum_helper 0;;
+
+let n = read_int() in
+print_int (sum n);
+print_newline();;</pre>
+	<p class="text-justify">
+	Now if you run the sum function in the interpreter it doesn't crash anymore.
+	</p>
+	<pre>
+# sum (int_of_float (10.0 ** 6.0));;
+- : int = 500000500000
+# sum (int_of_float (10.0 ** 7.0));;
+- : int = 50000005000000
+# sum (int_of_float (10.0 ** 8.0));;
+- : int = 5000000050000000</pre>
+	<p class="text-justify">
+	Let's see what happens behind the scenes:
+	</p>
+	<pre class="highlighted-code lang-x86asm">
+; acc is initially stored in register rax
+; n is initially stored in register rbx
+00000000004022a0:
+ 4022a0: 48 83 fb 03     cmp    rbx,0x3                ; compare n to 0x3
+ 4022a4: 75 06           jne    4022ac                 ; if n is not equal to 0x3 then jump
+ 4022a6: 48 83 c0 02     add    rax,0x2                ; add 0x2 to acc
+ 4022aa: c3              ret                           ; return to caller
+ 4022ab: 90              nop                           ; do nothing
+ 4022ac: 48 89 df        mov    rdi,rbx                ; rdi = n
+ 4022af: 48 83 c7 fe     add    rdi,0xfffffffffffffffe ; strange way to subtract 2 from n?
+ 4022b3: 48 8d 44 18 ff  lea    rax,[rax+rbx*1-0x1]    ; acc = acc + n - 1
+ 4022b8: 48 89 fb        mov    rbx,rdi                ; n = rdi
+ 4022bb: eb e3           jmp    4022a0                 ; jump to 4022a0
+ 4022bd: 0f 1f 00        nop    DWORD PTR [rax]        ; do nothing</pre>
+	<p class="text-justify">
+	As you can see, there is not a single <code>call</code> instruction, only jumps! This means that the amount of stack space
+	needed tot compute the sum is no longer proportional to the depth of recursion. In fact, this is not even recursion anymore, it's iteration.
+	Take a look at the trace, you can see there are no longer any recursive calls:
+	</p>
+	<pre>
+# sum 10;;
+sum &lt;-- 10
+sum --&gt; 55
+- : int = 55
+# sum 12345;;
+sum &lt;-- 12345
+sum --&gt; 76205685
+- : int = 76205685</pre>
+	<p class="text-justify">
+	<strong>Tail-end recursion is generally a great improvement, but it also has a few drawbacks</strong>. One is that it might reduce readability
+	and increase the size of the code (you introduce helper functions). A tail-end recursive way to write a function is not always this
+	obvious, sometimes it may be harder to come up with one, and even harder for somebody else to understand it by looking at the code.
+	My suggestion is to always think of <em>classic</em> recursion first and after that judge weather or not a tail-end recursive version
+	of the function is really worth the struggle. Sometimes the performance boost may not even be that significant.
+	</p>
+	<hr>
+	<h2>Tail-end recursion in other languages</h2>
+	<p class="text-justify">
+	Some compilers are able to recognize tail-end recursion and optimize it, some are not.
+	Before you think about using it, make sure your programming language is not going to simply throw it away and treat the function
+	just as an ordinary recursive function. Many languages do implement it as a standard, but some don't (such as Python).
+	In the case of compiled languages, if you are ever unsure of what happens behind the scenes, you can always write a small
+	function and take a look at the assembly code.<br>
+	Let's analyze the output of some C compilers, this time on 32 bit programs.
+	</p>
+	<pre class="highlighted-code lang-c">
+/*
+ * tail_end.c
+ * Sums up all integers from 1 to n using tail recursion.
+ */
+
+#include &lt;stdio.h&gt;
+
+#define sum(n) (sum_helper(0, n))
+int sum_helper (int acc, int n)
+{
+	if (n == 1) {
+		return acc + 1;
+	}
+	return sum_helper(acc + n, n - 1);
+}
+
+int main()
+{
+	int n;
+	scanf("%d", &amp;n);
+	printf("%d\n", sum(n));
+	return 0;
+}</pre>
+	<h3>GCC</h3>
+	<pre class="highlighted-code lang-bash">
+gcc -Wall -O2 -std=c11 -m32 -masm=intel -S tail_end.c</pre>
+	<p class="text-justify">
+	The assembly code of <span class="highlight-green">sum_helper</span> is analyzed bellow.
+	As expected, GCC optimizes the function. You can see that it first does a check for the base case,
+	and if <span class="highlight-green">n</span> is equal to 1 it jumps to <span class="highlight-green">.L3</span>,
+	thus adding 1 to <span class="highlight-green">acc</span>, which becomes 1, and then returns.
+	Otherwise, while <span class="highlight-green">n</span> is not equal to 1, it executes the instructions in <span class="highlight-green">.L7</span>.
+	</p>
+	<pre class="highlighted-code lang-x86asm">
+sum_helper:
+.LFB3:
+ .cfi_startproc
+ mov edx, DWORD PTR [esp+8] ; edx = n
+ mov eax, DWORD PTR [esp+4] ; eax = acc
+ cmp edx, 1
+ je .L3                     ; if n is 1 then jump to .L3
+ .p2align 4,,10
+ .p2align 3
+.L7:
+ add eax, edx               ; add n to acc
+ sub edx, 1                 ; decrement n
+ cmp edx, 1                 ; compare n with 1
+ jne .L7                    ; if n is not equal to 1 then jump to .L7
+.L3:
+ add eax, 1                 ; add 1 to acc
+ ret
+ .cfi_endproc</pre>
+	<h3>Clang</h3>
+	<pre class="highlighted-code lang-bash">
+clang -Wall -O2 -std=c11 -m32 -masm=intel -S tail_end.c</pre>
+	<p class="text-justify">
+	To be honest, I didn't expect this at all. Clang finds a straight forward formula that's equivalent to the function, it doesn't even use a loop!<br>
+	<code>n + (n - 1) * (n - 2) - (n - 2) * (n - 3) / 2 + 1</code><br>
+	I don't know how it came up with this, but it's a huge optimization!
+	</p>
+	<pre class="highlighted-code lang-x86asm">
+sum_helper:
+ push edi                      ; save the contents of the edi register
+ push esi                      ; save the contents of the esi register
+ mov esi, dword ptr [esp + 16] ; esi = n
+ mov ecx, dword ptr [esp + 12] ; ecx = acc
+ cmp esi, 1                    ; compare n to 1
+ je .LBB0_2                    ; if n is 1 then jump to .LBB0_2
+ lea edi, dword ptr [esi - 1]  ; edi = n - 1
+ lea eax, dword ptr [esi - 2]  ; eax = n - 2
+ imul edi, eax                 ; edi = (n - 1) * (n - 2)
+ lea edx, dword ptr [esi - 3]  ; edx = n - 3
+ mul edx                       ; (long long) edx_eax = (n - 2) * (n - 3)
+ shld edx, eax, 31             ; edx = (n - 2) * (n - 3) / 2
+ add ecx, esi                  ; acc += n
+ add ecx, edi                  ; acc += (n - 1) * (n - 2)
+ sub ecx, edx                  ; acc -= (n - 2) * (n - 3) / 2
+.LBB0_2:
+ inc ecx                       ; ++acc
+ mov eax, ecx                  ; result = acc
+ pop esi                       ; restore the contents of esi
+ pop edi                       ; restore the contents of edi
+ ret</pre>
+	<br>
+	<p class="text-justify">
+	This goes out the scope of this article, but I believe this optimization deservers a more detailed explanation. Let's go over it, step by step.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+push edi
+push esi</pre>
+	<p class="text-justify">
+	<span class="highlight-green">edi</span> and <span class="highlight-green">esi</span> are <strong>callee saved registers</strong>.
+	This means that a function has to store a copy of their values before modifying them, and then restore these values before the function returns.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+mov esi, dword ptr [esp + 16]
+mov ecx, dword ptr [esp + 12]</pre>
+	<p class="text-justify">
+	The two function parameters,are stored on the stack.
+	The first instruction takes the value of <span class="highlight-green">n</span> and stores it in register <span class="highlight-green">esi</span>,
+	while the second instruction takes the value of <span class="highlight-green">acc</span> and stores it into register <span class="highlight-green">ecx</span>.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+cmp esi, 1
+je .LBB0_2</pre>
+	<p class="text-justify">
+	If <span class="highlight-green">esi</span> (which is now equivalent to <span class="highlight-green">n</span>) is equal to 1,
+	jump to the location labeled <span class="highlight-green">.LBB0_2</span>.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+lea edi, dword ptr [esi - 1]
+lea eax, dword ptr [esi - 2]</pre>
+	<p class="text-justify">
+	Keep in mind that the value stored in <span class="highlight-green">esi</span> is <span class="highlight-green">n</span>.
+	The first instruction stores in <span class="highlight-green">edi</span> the value <code>n - 1</code>,
+	while the second one stores in <span class="highlight-green">eax</span> the value of <code>n - 2</code>.
+	Note that <span class="highlight-green">lea</span> actually comes from <q>load effective address</q>,
+	and its original purpose is working with memory addresses, but it is often used for arithmetic operations.
+	<p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+imul edi, eax</pre>
+	<p class="text-justify">
+	This takes the value in <span class="highlight-green">eax</span>, multiplies it with <span class="highlight-green">edi</span> and
+	stores the result in back in <span class="highlight-green">edi</span>. After this step, <span class="highlight-green">edi</span> becomes
+	<code>(n - 1) * (n - 2)</code>.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+lea edx, dword ptr [esi - 3]</pre>
+	<p class="text-justify">
+	Store the value <code>n - 3</code> in <span class="highlight-green">edx</span>.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+mul edx</pre>
+	<p class="text-justify">
+	This instruction multiplies the value stored in register <span class="highlight-green">eax</span> with the value stored in register
+	<span class="highlight-green">edx</span>, then produces a 64 bit output of the multiplication, storing the least significant
+	32 bits of the result in <span class="highlight-green">eax</span>, and the other 32 bits in <span class="highlight-green">edx</span>.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+shld edx, eax, 31</pre>
+	<p class="text-justify">
+	Double precision shift left: shifts <span class="highlight-green">edx</span> to left 31 times, and fills up uncovered bits from its
+	right side with bits taken from <span class="highlight-green">eax</span>.
+	</p>
+	<img class="image-responsive center-block" src="public/img/tail-end-recursion/shld.png" alt="shld illustration">
+	<p class="text-justify">
+	Because only 31 bits from <span class="highlight-green">eax</span> are spilled into <span class="highlight-green">edx</span>, the
+	least significant bit of <span class="highlight-green">eax</span> gets trimmed away, this being equivalent to a right shift, which is in
+	fact division by 2. After this instruction get executed, edx is going to be <code>(n - 2) * (n - 3) / 2</code>.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+add ecx, esi
+add ecx, edi
+sub ecx, edx
+.LBB0_2:
+inc ecx</pre>
+	<p class="text-justify">
+	Let's follow these instructions and pull out the formula for <span class="highlight-green">ecx</span>.<br>
+	First add <code>n</code>.<br>
+	Then add <code>(n - 1) * (n - 2)</code>.<br>
+	The third instruction subtracts <code>(n - 2) * (n - 3) / 2</code>.<br>
+	The last one simply adds 1 to <span class="highlight-green">ecx</span>.<br>
+	<code>ecx = n + (n - 1) * (n - 2) - (n - 2) * (n - 3) / 2 + 1</code>
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+mov eax, ecx</pre>
+	<p class="text-justify">
+	The result of the function has to be sored in register <span class="highlight-green">eax</span>.
+	</p>
+	<br>
+	<pre class="highlighted-code lang-x86asm">
+pop esi
+pop edi
+ret</pre>
+	<p class="text-justify">
+	Restore the previous values of <span class="highlight-green">esi</span> and <span class="highlight-green">edi</span>, then return back to the caller.
+	</p>
+	<br>
+	<p class="text-left">
+	<strong>Proof of the formula:</strong>
+	\[\frac{1}{2}(n−2)(n−3)+(n−2)(n−1)+n+1\]
+	\[\Leftrightarrow (n - 2)(n-1-\frac{n-3}{2})+n+1\]
+	\[\Leftrightarrow \frac{(n - 2)(2n-2-n+3)}{2}+n+1\]
+	\[\Leftrightarrow \frac{(n - 2)(n+1)}{2}+\frac{2(n+1)}{2}\Leftrightarrow \frac{n(n+1)}{2}\]
+	</p>
+	<p class="text-left">
+	<strong>What an awesome compiler!</strong>
+	</p>
+</div>
+<hr>
+<div id="references" class="text-center">
+	<h2>References</h2>
+	<ul class="list-unstyled">
+		<li><a target="_blank" href="http://greenteapress.com/thinkocaml/thinkocaml.pdf">Think OCaml</a></li>
+	</ul>
+</div>
+<script>
+MathJax.Hub.Config({
+	displayAlign: "left"
+});
+MathJax.Hub.Typeset();
+$('.highlighted-code').each(function(i, block) {
+	hljs.highlightBlock(block);
+});
+</script>
+</div>
